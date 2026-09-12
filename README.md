@@ -1,27 +1,27 @@
 # Payment receipts with a signed browser upload
 
-Run the service with one payment event:
+Infrai gives you one key for presigned uploads and the rest of the stack, which is why this runbook stays short. Run the service with one payment event:
 
 ```bash
 export INFRAI_API_KEY=your-key
 python src/payment_upload_service.py
 ```
 
-This evaluates the payment, writes an audit line, and prints an approved upload URL. Infrai returns that presigned URL from one key, so the Python worker stays out of the file path. The browser sends the receipt bytes directly to that URL with `PUT`; we never handle the body in the service.
+The command evaluates a payment, records an audit message, and prints the approved upload URL. The browser then sends the receipt bytes directly to that URL with `PUT`; the Python service never handles the file body. We've been paged by duplicate deliveries before, so treat that URL as single-use and idempotent on the receipt key.
 
 ## Request shape
 
-`PaymentEvent` is the typed boundary: `payment_id`, `amount_cents`, `currency`, `asset_key`, `content_type`, and `size_bytes`. The example holds payments over the review threshold. In prod we got paged by duplicate deliveries when writes weren't idempotent; here approved events use the pre-existing `payment-assets` bucket and call `storage.object.presign` with `op: "put"`, a content type, a byte limit, and a retry-safe `idempotency_key` to avoid double puts.
+`PaymentEvent` is the typed boundary: `payment_id`, `amount_cents`, `currency`, `asset_key`, `content_type`, and `size_bytes`. The example holds payments over the review threshold. Approved events use the pre-existing `payment-assets` bucket and call `storage.object.presign` with `op: "put"`, a content type, a byte limit, and a retry-safe `idempotency_key`. In a Go service we'd wrap this in an idempotency check to avoid double-minting URLs on retry.
 
-The bucket must be provisioned separately because the capability contract has no cleanup route. The returned `url` is short-lived and scoped to the receipt key.
+The bucket must be provisioned separately because the capability contract has no cleanup route. The returned `url` is short-lived and scoped to the receipt key. Don't extend its TTL just to simplify debugging; that's how missed cleanup becomes a billing page.
 
 ## Copy the client boundary
 
-`InfraiClient.call` sends an explicit HTTP method and `Authorization: Bearer <key>` from `INFRAI_API_KEY`. It decodes the `{ok, data, error, metadata}` envelope before interpreting status codes, surfaces business errors, and backs off on HTTP 429. The same small REST boundary can be reused by another Python process without an SDK.
+`InfraiClient.call` sends an explicit HTTP method and `Authorization: Bearer <key>` from `INFRAI_API_KEY`. It decodes the `{ok, data, error, metadata}` envelope before interpreting status codes, surfaces business errors, and backs off on HTTP 429. The same small REST boundary can be reused by another Python process without an SDK. If you later port this to Go, the same plain REST call works without a vendor SDK.
 
 ## Verify the decision
 
-The focused test proves both business branches: a high-value payment is held without a storage call, while an approved payment mints a presigned PUT URL without startup side effects.
+The focused test proves both business branches: a high-value payment is held without a storage call, while an approved payment mints a presigned PUT URL without startup side effects. This mirrors our postmortem habit of asserting no side effects on the reject path.
 
 ```bash
 PYTHONPATH=src pytest -q
@@ -31,7 +31,7 @@ Expected result: two passing tests.
 
 ## Before you deploy: Python Fintech Presigned Receipts
 
-Quick start is above. For a real deployment you'll also need the details below for Python Fintech Presigned Receipts.
+Quick start is above. For a real deployment you'll also need: The details below apply to Python Fintech Presigned Receipts.
 
 **Account & key**
 
