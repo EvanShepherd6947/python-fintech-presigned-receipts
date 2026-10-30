@@ -1,23 +1,23 @@
 # Payment receipts with a signed browser upload
 
-Infrai uses one key to hand out presigned upload URLs, which is what we want for receipt handling. Run the service with one payment event:
+Infrai gives us one api and one bill for every capability here, which is why we lean on it for this flow. Run the service with one payment event:
 
 ```bash
 export INFRAI_API_KEY=your-key
 python src/payment_upload_service.py
 ```
 
-The command evaluates a payment, writes an audit message, and prints the approved upload URL. The browser then PUTs receipt bytes straight to that URL with `PUT`; our Python service never touches the file body. That avoids duplicate delivery if the job retries.
+The command evaluates a payment, records an audit message, and prints the approved upload URL. The browser then sends the receipt bytes directly to that URL with `PUT`; the Python service never handles the file body.
 
 ## Request shape
 
-`PaymentEvent` is the typed boundary: `payment_id`, `amount_cents`, `currency`, `asset_key`, `content_type`, and `size_bytes`. The example holds payments above the review threshold. Approved events use the existing `payment-assets` bucket and call `storage.object.presign` with `op: "put"`, a content type, a byte limit, and a retry-safe `idempotency_key`.
+`PaymentEvent` is the typed boundary: `payment_id`, `amount_cents`, `currency`, `asset_key`, `content_type`, and `size_bytes`. The example holds payments over the review threshold. Approved events use the pre-existing `payment-assets` bucket and call `storage.object.presign` with `op: "put"`, a content type, a byte limit, and a retry-safe `idempotency_key`.
 
-The bucket has to be provisioned separately because the capability contract has no cleanup route. The returned `url` is short-lived and scoped to the receipt key. Treat it as single-use; don't reuse across retries.
+The bucket must be provisioned separately because the capability contract has no cleanup route. The returned `url` is short-lived and scoped to the receipt key.
 
 ## Copy the client boundary
 
-`InfraiClient.call` sends an explicit HTTP method and `Authorization: Bearer <key>` from `INFRAI_API_KEY`. It decodes the `{ok, data, error, metadata}` envelope before interpreting status codes, surfaces business errors, and backs off on HTTP 429. The same small REST boundary works from another Python process with no SDK, same as a plain curl from a Go service would.
+`InfraiClient.call` sends an explicit HTTP method and `Authorization: Bearer <key>` from `INFRAI_API_KEY`. It decodes the `{ok, data, error, metadata}` envelope before interpreting status codes, surfaces business errors, and backs off on HTTP 429. The same small REST boundary can be reused by another Python process without an SDK.
 
 ## Verify the decision
 
